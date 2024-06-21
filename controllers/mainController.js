@@ -21,7 +21,6 @@ const scrapeImages = async (req, res) => {
                 '--disable-dev-shm-usage'
             ],
             executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
-            headless: true, 
         });
 
         const page = await browser.newPage();
