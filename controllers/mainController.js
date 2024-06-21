@@ -8,62 +8,80 @@ const openai = new OpenAI({
     apiKey: process.env.OPENAI_KEY
 });
 
-const scrapeImages = async(req, res) => {
+const scrapeImages = async (req, res) => {
     const { url } = req.body;
-    if(!url){
-        return res.status(404).json('URL Missing');
+    if (!url) {
+        return res.status(400).json('URL Missing');
     }
-    try{
-        const browser = await puppeteer.launch();
+    try {
+        const browser = await puppeteer.launch({
+            args: [
+                '--disable-setuid-sandbox',
+                '--no-sandbox',
+                '--disable-dev-shm-usage'
+            ],
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
+            headless: true, 
+        });
+
         const page = await browser.newPage();
         await page.goto(url, { waitUntil: 'load', timeout: 0 });
-        
+
         const dataHrefs = await page.evaluate(() => {
             const elements = Array.from(document.querySelectorAll('img.photo-link.lazyload.lazyload_add_error_class'));
-            return elements.map(el => el.getAttribute('data-href')).filter(Boolean); 
+            return elements.map(el => el.getAttribute('data-href')).filter(Boolean);
         });
-        
-        browser.close();
-        res.status(200).json({urls: dataHrefs});
-    }catch(e){
-        console.log(e.message);
-        res.status(500).json(e.message);
+
+        const restaurantName = await page.evaluate(() => {
+            const titleElement = document.querySelector('.rest_title.notranslate h1 a');
+            return titleElement ? titleElement.textContent.trim() : null;
+        });
+
+        await browser.close();
+
+        res.status(200).json({ urls: dataHrefs, restaurantName });
+    } catch (e) {
+        console.error('Error scraping:', e.message);
+        res.status(500).json({ error: 'Error scraping data', message: e.message });
     }
-    
-}
+};
+
 
 async function getGPTResponse(images) {
-    try {
+    const imageInputs = images.map(image => ({
+        type: 'image_url',
+        image_url: { url: image }
+    }));
+    console.log(images);
+    const messages = [
+        {
+            role: 'system',
+            'content':  "You're a data extractor for a restaurant menu"
+        },
+        {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: `Extract the Name of Item, Price, and Description like so [{ "Name" : "Name of the item", "Price" : "Price of item", "Description" : "Description of Item" }, and so on ]`,
+              },
+              
+            ],
+          },
+    ]
 
+    images.forEach(url => {
+        messages[1].content.push({
+            type: 'image_url',
+            image_url: {
+                url: url
+            }
+        });
+    });
+    try {
         const response = await openai.chat.completions.create({
             model: 'gpt-4o',
-            messages: [
-            {
-                role: 'system',
-                'content':  "You're a data extractor for a restaurant menu"
-            },
-              {
-                role: 'user',
-                content: [
-                  {
-                    type: 'text',
-                    text: `Extract the Name of Item, Price, and Description like so [{ "Name" : "Name of the item", "Price" : "Price of item", "Description" : "Description of Item" }, and so on ]`,
-                  },
-                  {
-                    type: 'image_url',
-                    image_url: {"url": images[0]},
-                  },
-                  {
-                    type: 'image_url',
-                    image_url: {"url": images[1]},
-                  },
-                  {
-                    type: 'image_url',
-                    image_url: {"url": images[2]},
-                  },
-                ],
-              },
-            ],
+            messages: messages
           });
         return response.choices[0].message.content;
     } catch (error) {
@@ -99,9 +117,6 @@ function parseAndRemoveDuplicates(dishesArr) {
 
     return uniqueDishes;
 }
-
-
-
 
 
 const getResults = async (req, res) => {
