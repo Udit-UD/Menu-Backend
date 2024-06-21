@@ -5,6 +5,7 @@ const dotenv = require('dotenv');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const menuRoutes = require('./routes/mainRoutes');
+const db = require('./db');
 
 dotenv.config();
 const app = express();
@@ -23,7 +24,6 @@ app.use(morgan('common'));
 // Routes
 app.use('/menu', menuRoutes);
 
-// Error handling middleware
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).send('Something broke!');
