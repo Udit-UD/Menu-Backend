@@ -23,9 +23,10 @@ const scrapeImages = async (req, res) => {
             executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
         });
 
+        console.log("launched!");
         const page = await browser.newPage();
         await page.goto(url, { waitUntil: 'load', timeout: 0 });
-
+        console.log("trying");
         const dataHrefs = await page.evaluate(() => {
             const elements = Array.from(document.querySelectorAll('img.photo-link.lazyload.lazyload_add_error_class'));
             const urls = elements.map(el => el.getAttribute('data-href')).filter(Boolean);
