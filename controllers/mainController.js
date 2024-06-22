@@ -28,7 +28,8 @@ const scrapeImages = async (req, res) => {
 
         const dataHrefs = await page.evaluate(() => {
             const elements = Array.from(document.querySelectorAll('img.photo-link.lazyload.lazyload_add_error_class'));
-            return elements.map(el => el.getAttribute('data-href')).filter(Boolean);
+            const urls = elements.map(el => el.getAttribute('data-href')).filter(Boolean);
+            return Array.from(new Set(urls)); 
         });
 
         const restaurantName = await page.evaluate(() => {
@@ -47,10 +48,6 @@ const scrapeImages = async (req, res) => {
 
 
 async function getGPTResponse(images) {
-    const imageInputs = images.map(image => ({
-        type: 'image_url',
-        image_url: { url: image }
-    }));
     console.log(images);
     const messages = [
         {
@@ -62,7 +59,7 @@ async function getGPTResponse(images) {
             content: [
               {
                 type: 'text',
-                text: `Extract the Name of Item, Price, and Description like so [{ "Name" : "Name of the item", "Price" : "Price of item", "Description" : "Description of Item" }, and so on ]`,
+                text: `Extract the Name of Item, Price, and Description like so [{ "Name" : "Name of the item", "Price" : "Price of item", "Description" : "Description of Item" }, and so on ]. Don't write anything else in response.`,
               },
               
             ],
@@ -125,11 +122,32 @@ const getResults = async (req, res) => {
             return res.status(404).json('Image URLs missing');
         }
         try{
-            const gptResponse = await getGPTResponse(imageUrls.slice(0, 3));
-            console.log(gptResponse);
-            const responseArray = parseMenuString(gptResponse);
-            const finalRes = parseAndRemoveDuplicates(responseArray);
-            res.status(200).json({finalRes});
+            const getBatchGPTResponse = async (urls, previousRes) => {
+                const gptResponse = await getGPTResponse(urls);
+                if(gptResponse===null) return [];
+                console.log('done');
+                const responseArray = parseMenuString(gptResponse);
+                return parseAndRemoveDuplicates(previousRes.concat(responseArray));
+            };
+            
+            // Function to split array into chunks
+            const chunkArray = (array, chunkSize) => {
+                const chunks = [];
+                for (let i = 0; i < array.length; i += chunkSize) {
+                    chunks.push(array.slice(i, i + chunkSize));
+                }
+                return chunks;
+            };
+            // Split imageUrls into chunks of 5
+            const imageUrlChunks = chunkArray(imageUrls.slice(0,20), 3);
+            
+            let finalResults = [];
+            for (const chunk of imageUrlChunks) {
+                console.log("calling");
+                const result = await getBatchGPTResponse(chunk, finalResults);
+                finalResults = finalResults.concat(result);
+            }
+            res.status(200).json({finalResults});
         }catch(e){
             res.status(500).json(e.message);
         }
