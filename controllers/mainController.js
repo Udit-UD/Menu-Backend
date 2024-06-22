@@ -29,7 +29,8 @@ const scrapeImages = async (req, res) => {
 
         const dataHrefs = await page.evaluate(() => {
             const elements = Array.from(document.querySelectorAll('img.photo-link.lazyload.lazyload_add_error_class'));
-            return elements.map(el => el.getAttribute('data-href')).filter(Boolean);
+            const urls = elements.map(el => el.getAttribute('data-href')).filter(Boolean);
+            return Array.from(new Set(urls)); 
         });
 
         const restaurantName = await page.evaluate(() => {
@@ -48,10 +49,6 @@ const scrapeImages = async (req, res) => {
 
 
 async function getGPTResponse(images) {
-    const imageInputs = images.map(image => ({
-        type: 'image_url',
-        image_url: { url: image }
-    }));
     console.log(images);
     const messages = [
         {
@@ -63,7 +60,7 @@ async function getGPTResponse(images) {
             content: [
               {
                 type: 'text',
-                text: `Extract the Name of Item, Price, and Description like so [{ "Name" : "Name of the item", "Price" : "Price of item", "Description" : "Description of Item" }, and so on ]`,
+                text: `Extract the Name of Item, Price, and Description like so [{ "Name" : "Name of the item", "Price" : "Price of item", "Description" : "Description of Item" }, and so on ]. Don't write anything else in response.`,
               },
               
             ],
@@ -109,8 +106,14 @@ function parseMenuString(menuString) {
 
 function parseAndRemoveDuplicates(dishesArr) {
     let uniqueDishesMap = new Map();
+    let seenNames = new Set();
+
     dishesArr.forEach(dish => {
-        uniqueDishesMap.set(dish.Name, dish);
+        const dishNameLowerCase = dish.Name.toLowerCase();
+        if (!seenNames.has(dishNameLowerCase)) {
+            seenNames.add(dishNameLowerCase);
+            uniqueDishesMap.set(dish.Name, dish);
+        }
     });
 
     let uniqueDishes = Array.from(uniqueDishesMap.values());
@@ -125,11 +128,31 @@ const getResults = async (req, res) => {
             return res.status(400).json('Invalid request: restaurantName or imageUrls missing or empty');
         }
 
-        const gptResponse = await getGPTResponse(imageUrls.slice(0, 3));
-        console.log(gptResponse);
-        const responseArray = parseMenuString(gptResponse);
-        const finalRes = parseAndRemoveDuplicates(responseArray);
-
+        const getBatchGPTResponse = async (urls, previousRes) => {
+            const gptResponse = await getGPTResponse(urls);
+            if(gptResponse===null) return [];
+            console.log('done');
+            const responseArray = parseMenuString(gptResponse);
+            return parseAndRemoveDuplicates(previousRes.concat(responseArray));
+        };
+        
+        // Function to split array into chunks
+        const chunkArray = (array, chunkSize) => {
+            const chunks = [];
+            for (let i = 0; i < array.length; i += chunkSize) {
+                chunks.push(array.slice(i, i + chunkSize));
+            }
+            return chunks;
+        };
+        // Split imageUrls into chunks of 5
+        const imageUrlChunks = chunkArray(imageUrls.slice(0,20), 3);
+        
+        let finalResults = [];
+        for (const chunk of imageUrlChunks) {
+            console.log("calling");
+            const result = await getBatchGPTResponse(chunk, finalResults);
+            finalResults = finalResults.concat(result);
+        }
 
         const safeRestaurantName = restaurantName.replace(/[^\w\s]/gi, '').replace(/\s+/g, '_').toLowerCase();
         const tableName = `records_${safeRestaurantName}`;
@@ -153,7 +176,7 @@ const getResults = async (req, res) => {
             console.log(`Table ${tableName} created successfully`);
             
             // Inserting data into the dynamically created table
-            const insertPromises = finalRes.map(item => {
+            const insertPromises = finalResults.map(item => {
                 const { Name, Price, Description } = item;
                 let priceValue = Price === 'Not Listed' ? null : parseFloat(Price);
 
@@ -180,7 +203,7 @@ const getResults = async (req, res) => {
             Promise.all(insertPromises)
                 .then(() => {
                     console.log('Items saved successfully');
-                    res.status(200).json({ finalRes });
+                    res.status(200).json({ finalResults });
                 })
                 .catch(err => {
                     console.error('Error saving items to database:', err);
