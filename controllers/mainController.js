@@ -139,7 +139,7 @@ const getResults = async (req, res) => {
                 return chunks;
             };
             // Split imageUrls into chunks of 5
-            const imageUrlChunks = chunkArray(imageUrls.slice(0,20), 3);
+            const imageUrlChunks = chunkArray(imageUrls.slice(0,25), 3);
             
             let finalResults = [];
             for (const chunk of imageUrlChunks) {
